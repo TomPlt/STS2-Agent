@@ -373,6 +373,88 @@ def create_server(client: Sts2Client | None = None) -> FastMCP:
         return sts2.choose_rest_option(option_index=option_index)
 
     @mcp.tool
+    def open_shop_inventory() -> dict[str, Any]:
+        """Open the merchant inventory from the shop room.
+
+        Preconditions:
+            - screen is SHOP.
+            - available_actions includes "open_shop_inventory".
+            - shop.is_open is false.
+
+        After opening, the active screen becomes the merchant inventory and
+        shop cards/relics/potions/removal become actionable.
+        """
+        return sts2.open_shop_inventory()
+
+    @mcp.tool
+    def close_shop_inventory() -> dict[str, Any]:
+        """Close the merchant inventory and return to the outer shop room.
+
+        Preconditions:
+            - screen is SHOP.
+            - available_actions includes "close_shop_inventory".
+            - shop.is_open is true.
+        """
+        return sts2.close_shop_inventory()
+
+    @mcp.tool
+    def buy_card(option_index: int) -> dict[str, Any]:
+        """Buy a card from the open merchant inventory.
+
+        Args:
+            option_index: zero-based index into shop.cards[].
+
+        Preconditions:
+            - screen is SHOP.
+            - shop.is_open is true.
+            - available_actions includes "buy_card".
+        """
+        return sts2.buy_card(option_index=option_index)
+
+    @mcp.tool
+    def buy_relic(option_index: int) -> dict[str, Any]:
+        """Buy a relic from the open merchant inventory.
+
+        Args:
+            option_index: zero-based index into shop.relics[].
+
+        Preconditions:
+            - screen is SHOP.
+            - shop.is_open is true.
+            - available_actions includes "buy_relic".
+        """
+        return sts2.buy_relic(option_index=option_index)
+
+    @mcp.tool
+    def buy_potion(option_index: int) -> dict[str, Any]:
+        """Buy a potion from the open merchant inventory.
+
+        Args:
+            option_index: zero-based index into shop.potions[].
+
+        Preconditions:
+            - screen is SHOP.
+            - shop.is_open is true.
+            - available_actions includes "buy_potion".
+        """
+        return sts2.buy_potion(option_index=option_index)
+
+    @mcp.tool
+    def remove_card_at_shop() -> dict[str, Any]:
+        """Use the merchant card removal service.
+
+        Preconditions:
+            - screen is SHOP.
+            - shop.is_open is true.
+            - shop.card_removal.available is true.
+            - available_actions includes "remove_card_at_shop".
+
+        This may transition into CARD_SELECTION. Follow up with
+        select_deck_card when needed.
+        """
+        return sts2.remove_card_at_shop()
+
+    @mcp.tool
     def proceed() -> dict[str, Any]:
         """Click the "Proceed" / "Continue" button on the current screen.
 

@@ -2,6 +2,7 @@ using Godot;
 using MegaCrit.Sts2.Core.Combat;
 using MegaCrit.Sts2.Core.Entities.Cards;
 using MegaCrit.Sts2.Core.Entities.Creatures;
+using MegaCrit.Sts2.Core.Entities.Merchant;
 using MegaCrit.Sts2.Core.Entities.Players;
 using MegaCrit.Sts2.Core.Entities.RestSite;
 using MegaCrit.Sts2.Core.Events;
@@ -56,7 +57,7 @@ internal static class GameStateService
             selection = BuildSelectionPayload(currentScreen),
             chest = BuildChestPayload(currentScreen),
             @event = BuildEventPayload(currentScreen),
-            shop = null,
+            shop = BuildShopPayload(currentScreen),
             rest = BuildRestPayload(currentScreen),
             reward = BuildRewardPayload(currentScreen),
             game_over = null
@@ -197,6 +198,66 @@ internal static class GameStateService
                 name = "choose_rest_option",
                 requires_target = false,
                 requires_index = true
+            });
+        }
+
+        if (CanOpenShopInventory(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "open_shop_inventory",
+                requires_target = false,
+                requires_index = false
+            });
+        }
+
+        if (CanCloseShopInventory(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "close_shop_inventory",
+                requires_target = false,
+                requires_index = false
+            });
+        }
+
+        if (CanBuyShopCard(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "buy_card",
+                requires_target = false,
+                requires_index = true
+            });
+        }
+
+        if (CanBuyShopRelic(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "buy_relic",
+                requires_target = false,
+                requires_index = true
+            });
+        }
+
+        if (CanBuyShopPotion(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "buy_potion",
+                requires_target = false,
+                requires_index = true
+            });
+        }
+
+        if (CanRemoveCardAtShop(currentScreen))
+        {
+            descriptors.Add(new ActionDescriptor
+            {
+                name = "remove_card_at_shop",
+                requires_target = false,
+                requires_index = false
             });
         }
 
@@ -358,6 +419,46 @@ internal static class GameStateService
         {
             return false;
         }
+    }
+
+    public static bool CanOpenShopInventory(IScreenContext? currentScreen)
+    {
+        var room = GetMerchantRoom(currentScreen);
+        return room != null && room.Inventory != null && !room.Inventory.IsOpen && currentScreen is NMerchantRoom;
+    }
+
+    public static bool CanCloseShopInventory(IScreenContext? currentScreen)
+    {
+        return currentScreen is NMerchantInventory inventory && inventory.IsOpen;
+    }
+
+    public static bool CanBuyShopCard(IScreenContext? currentScreen)
+    {
+        var inventoryScreen = GetMerchantInventoryScreen(currentScreen);
+        return inventoryScreen != null && inventoryScreen.IsOpen &&
+            GetMerchantCardEntries(currentScreen).Any(entry => entry.IsStocked && entry.EnoughGold);
+    }
+
+    public static bool CanBuyShopRelic(IScreenContext? currentScreen)
+    {
+        var inventoryScreen = GetMerchantInventoryScreen(currentScreen);
+        return inventoryScreen != null && inventoryScreen.IsOpen &&
+            GetMerchantRelicEntries(currentScreen).Any(entry => entry.IsStocked && entry.EnoughGold);
+    }
+
+    public static bool CanBuyShopPotion(IScreenContext? currentScreen)
+    {
+        var inventoryScreen = GetMerchantInventoryScreen(currentScreen);
+        return inventoryScreen != null && inventoryScreen.IsOpen &&
+            GetMerchantPotionEntries(currentScreen).Any(entry => entry.IsStocked && entry.EnoughGold);
+    }
+
+    public static bool CanRemoveCardAtShop(IScreenContext? currentScreen)
+    {
+        var inventoryScreen = GetMerchantInventoryScreen(currentScreen);
+        var entry = GetMerchantCardRemovalEntry(currentScreen);
+        return inventoryScreen != null && inventoryScreen.IsOpen &&
+            entry?.IsStocked == true && entry.EnoughGold;
     }
 
     public static IReadOnlyList<NMapPoint> GetAvailableMapNodes(IScreenContext? currentScreen, RunState? runState)
@@ -645,6 +746,36 @@ internal static class GameStateService
             names.Add("choose_rest_option");
         }
 
+        if (CanOpenShopInventory(currentScreen))
+        {
+            names.Add("open_shop_inventory");
+        }
+
+        if (CanCloseShopInventory(currentScreen))
+        {
+            names.Add("close_shop_inventory");
+        }
+
+        if (CanBuyShopCard(currentScreen))
+        {
+            names.Add("buy_card");
+        }
+
+        if (CanBuyShopRelic(currentScreen))
+        {
+            names.Add("buy_relic");
+        }
+
+        if (CanBuyShopPotion(currentScreen))
+        {
+            names.Add("buy_potion");
+        }
+
+        if (CanRemoveCardAtShop(currentScreen))
+        {
+            names.Add("remove_card_at_shop");
+        }
+
         return names.ToArray();
     }
 
@@ -872,6 +1003,49 @@ internal static class GameStateService
         {
             return null;
         }
+    }
+
+    private static ShopPayload? BuildShopPayload(IScreenContext? currentScreen)
+    {
+        var merchantRoom = GetMerchantRoom(currentScreen);
+        var inventoryScreen = GetMerchantInventoryScreen(currentScreen);
+        var inventory = inventoryScreen?.Inventory ?? merchantRoom?.Inventory?.Inventory;
+
+        if (merchantRoom == null && inventoryScreen == null)
+        {
+            return null;
+        }
+
+        if (inventory == null)
+        {
+            return new ShopPayload
+            {
+                is_open = inventoryScreen?.IsOpen ?? false,
+                can_open = CanOpenShopInventory(currentScreen),
+                can_close = CanCloseShopInventory(currentScreen),
+                cards = Array.Empty<ShopCardPayload>(),
+                relics = Array.Empty<ShopRelicPayload>(),
+                potions = Array.Empty<ShopPotionPayload>(),
+                card_removal = null
+            };
+        }
+
+        var cards = inventory.CharacterCardEntries
+            .Select((entry, index) => BuildShopCardPayload(entry, index, "character"))
+            .Concat(inventory.ColorlessCardEntries.Select((entry, index) =>
+                BuildShopCardPayload(entry, inventory.CharacterCardEntries.Count + index, "colorless")))
+            .ToArray();
+
+        return new ShopPayload
+        {
+            is_open = inventoryScreen?.IsOpen ?? false,
+            can_open = CanOpenShopInventory(currentScreen),
+            can_close = CanCloseShopInventory(currentScreen),
+            cards = cards,
+            relics = inventory.RelicEntries.Select((entry, index) => BuildShopRelicPayload(entry, index)).ToArray(),
+            potions = inventory.PotionEntries.Select((entry, index) => BuildShopPotionPayload(entry, index)).ToArray(),
+            card_removal = BuildShopCardRemovalPayload(inventory.CardRemovalEntry)
+        };
     }
 
     private static ChestPayload? BuildChestPayload(IScreenContext? currentScreen)
@@ -1143,6 +1317,74 @@ internal static class GameStateService
         };
     }
 
+    private static ShopCardPayload BuildShopCardPayload(MerchantCardEntry entry, int index, string category)
+    {
+        var card = entry.CreationResult?.Card;
+        return new ShopCardPayload
+        {
+            index = index,
+            category = category,
+            card_id = card?.Id.Entry ?? string.Empty,
+            name = card?.Title ?? string.Empty,
+            upgraded = card?.IsUpgraded ?? false,
+            card_type = card?.Type.ToString() ?? string.Empty,
+            rarity = card?.Rarity.ToString() ?? string.Empty,
+            energy_cost = card?.EnergyCost.GetWithModifiers(CostModifiers.All) ?? 0,
+            star_cost = card != null ? Math.Max(0, card.GetStarCostWithModifiers()) : 0,
+            price = entry.IsStocked ? entry.Cost : 0,
+            on_sale = entry.IsOnSale,
+            is_stocked = entry.IsStocked,
+            enough_gold = entry.IsStocked && entry.EnoughGold
+        };
+    }
+
+    private static ShopRelicPayload BuildShopRelicPayload(MerchantRelicEntry entry, int index)
+    {
+        var relic = entry.Model;
+        return new ShopRelicPayload
+        {
+            index = index,
+            relic_id = relic?.Id.Entry ?? string.Empty,
+            name = relic?.Title.GetFormattedText() ?? string.Empty,
+            rarity = relic?.Rarity.ToString() ?? string.Empty,
+            price = entry.IsStocked ? entry.Cost : 0,
+            is_stocked = entry.IsStocked,
+            enough_gold = entry.IsStocked && entry.EnoughGold
+        };
+    }
+
+    private static ShopPotionPayload BuildShopPotionPayload(MerchantPotionEntry entry, int index)
+    {
+        var potion = entry.Model;
+        return new ShopPotionPayload
+        {
+            index = index,
+            potion_id = potion?.Id.Entry,
+            name = potion?.Title.GetFormattedText(),
+            rarity = potion?.Rarity.ToString(),
+            usage = potion?.Usage.ToString(),
+            price = entry.IsStocked ? entry.Cost : 0,
+            is_stocked = entry.IsStocked,
+            enough_gold = entry.IsStocked && entry.EnoughGold
+        };
+    }
+
+    private static ShopCardRemovalPayload? BuildShopCardRemovalPayload(MerchantCardRemovalEntry? entry)
+    {
+        if (entry == null)
+        {
+            return null;
+        }
+
+        return new ShopCardRemovalPayload
+        {
+            price = entry.IsStocked ? entry.Cost : 0,
+            available = entry.IsStocked,
+            used = entry.Used,
+            enough_gold = entry.IsStocked && entry.EnoughGold
+        };
+    }
+
     private static DeckCardPayload BuildDeckCardPayload(CardModel card, int index)
     {
         return new DeckCardPayload
@@ -1193,6 +1435,57 @@ internal static class GameStateService
             null => "Unknown",
             _ => reward.GetType().Name
         };
+    }
+
+    private static NMerchantRoom? GetMerchantRoom(IScreenContext? currentScreen)
+    {
+        return currentScreen switch
+        {
+            NMerchantRoom room => room,
+            NMerchantInventory => NMerchantRoom.Instance,
+            _ => null
+        };
+    }
+
+    private static NMerchantInventory? GetMerchantInventoryScreen(IScreenContext? currentScreen)
+    {
+        return currentScreen switch
+        {
+            NMerchantInventory inventory => inventory,
+            NMerchantRoom room when room.Inventory != null => room.Inventory,
+            _ => null
+        };
+    }
+
+    public static MerchantInventory? GetMerchantInventory(IScreenContext? currentScreen)
+    {
+        return GetMerchantInventoryScreen(currentScreen)?.Inventory ?? GetMerchantRoom(currentScreen)?.Inventory?.Inventory;
+    }
+
+    public static IReadOnlyList<MerchantCardEntry> GetMerchantCardEntries(IScreenContext? currentScreen)
+    {
+        var inventory = GetMerchantInventory(currentScreen);
+        if (inventory == null)
+        {
+            return Array.Empty<MerchantCardEntry>();
+        }
+
+        return inventory.CharacterCardEntries.Concat(inventory.ColorlessCardEntries).ToArray();
+    }
+
+    public static IReadOnlyList<MerchantRelicEntry> GetMerchantRelicEntries(IScreenContext? currentScreen)
+    {
+        return GetMerchantInventory(currentScreen)?.RelicEntries?.ToArray() ?? Array.Empty<MerchantRelicEntry>();
+    }
+
+    public static IReadOnlyList<MerchantPotionEntry> GetMerchantPotionEntries(IScreenContext? currentScreen)
+    {
+        return GetMerchantInventory(currentScreen)?.PotionEntries?.ToArray() ?? Array.Empty<MerchantPotionEntry>();
+    }
+
+    public static MerchantCardRemovalEntry? GetMerchantCardRemovalEntry(IScreenContext? currentScreen)
+    {
+        return GetMerchantInventory(currentScreen)?.CardRemovalEntry;
     }
 
     private static bool TryGetMapScreen(IScreenContext? currentScreen, RunState? runState, out NMapScreen? mapScreen)
@@ -1263,7 +1556,7 @@ internal sealed class GameStatePayload
 
     public EventPayload? @event { get; init; }
 
-    public object? shop { get; init; }
+    public ShopPayload? shop { get; init; }
 
     public RestPayload? rest { get; init; }
 
@@ -1403,6 +1696,99 @@ internal sealed class RestOptionPayload
     public string description { get; init; } = string.Empty;
 
     public bool is_enabled { get; init; }
+}
+
+internal sealed class ShopPayload
+{
+    public bool is_open { get; init; }
+
+    public bool can_open { get; init; }
+
+    public bool can_close { get; init; }
+
+    public ShopCardPayload[] cards { get; init; } = Array.Empty<ShopCardPayload>();
+
+    public ShopRelicPayload[] relics { get; init; } = Array.Empty<ShopRelicPayload>();
+
+    public ShopPotionPayload[] potions { get; init; } = Array.Empty<ShopPotionPayload>();
+
+    public ShopCardRemovalPayload? card_removal { get; init; }
+}
+
+internal sealed class ShopCardPayload
+{
+    public int index { get; init; }
+
+    public string category { get; init; } = string.Empty;
+
+    public string card_id { get; init; } = string.Empty;
+
+    public string name { get; init; } = string.Empty;
+
+    public bool upgraded { get; init; }
+
+    public string card_type { get; init; } = string.Empty;
+
+    public string rarity { get; init; } = string.Empty;
+
+    public int energy_cost { get; init; }
+
+    public int star_cost { get; init; }
+
+    public int price { get; init; }
+
+    public bool on_sale { get; init; }
+
+    public bool is_stocked { get; init; }
+
+    public bool enough_gold { get; init; }
+}
+
+internal sealed class ShopRelicPayload
+{
+    public int index { get; init; }
+
+    public string relic_id { get; init; } = string.Empty;
+
+    public string name { get; init; } = string.Empty;
+
+    public string rarity { get; init; } = string.Empty;
+
+    public int price { get; init; }
+
+    public bool is_stocked { get; init; }
+
+    public bool enough_gold { get; init; }
+}
+
+internal sealed class ShopPotionPayload
+{
+    public int index { get; init; }
+
+    public string? potion_id { get; init; }
+
+    public string? name { get; init; }
+
+    public string? rarity { get; init; }
+
+    public string? usage { get; init; }
+
+    public int price { get; init; }
+
+    public bool is_stocked { get; init; }
+
+    public bool enough_gold { get; init; }
+}
+
+internal sealed class ShopCardRemovalPayload
+{
+    public int price { get; init; }
+
+    public bool available { get; init; }
+
+    public bool used { get; init; }
+
+    public bool enough_gold { get; init; }
 }
 
 internal sealed class MapCoordPayload

@@ -186,6 +186,63 @@ class Sts2Client:
             },
         )
 
+    def open_shop_inventory(self) -> dict[str, Any]:
+        return self.execute_action(
+            "open_shop_inventory",
+            client_context={
+                "source": "mcp",
+                "tool_name": "open_shop_inventory",
+            },
+        )
+
+    def close_shop_inventory(self) -> dict[str, Any]:
+        return self.execute_action(
+            "close_shop_inventory",
+            client_context={
+                "source": "mcp",
+                "tool_name": "close_shop_inventory",
+            },
+        )
+
+    def buy_card(self, option_index: int) -> dict[str, Any]:
+        return self.execute_action(
+            "buy_card",
+            option_index=option_index,
+            client_context={
+                "source": "mcp",
+                "tool_name": "buy_card",
+            },
+        )
+
+    def buy_relic(self, option_index: int) -> dict[str, Any]:
+        return self.execute_action(
+            "buy_relic",
+            option_index=option_index,
+            client_context={
+                "source": "mcp",
+                "tool_name": "buy_relic",
+            },
+        )
+
+    def buy_potion(self, option_index: int) -> dict[str, Any]:
+        return self.execute_action(
+            "buy_potion",
+            option_index=option_index,
+            client_context={
+                "source": "mcp",
+                "tool_name": "buy_potion",
+            },
+        )
+
+    def remove_card_at_shop(self) -> dict[str, Any]:
+        return self.execute_action(
+            "remove_card_at_shop",
+            client_context={
+                "source": "mcp",
+                "tool_name": "remove_card_at_shop",
+            },
+        )
+
     def execute_action(
         self,
         action: str,
