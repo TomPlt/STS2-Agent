@@ -42,6 +42,8 @@ namespace STS2AIAgent.Game;
 
 internal static class GameActionService
 {
+    private static readonly bool DebugActionsEnabled = IsDebugActionsEnabled();
+
     public static Task<ActionResponsePayload> ExecuteAsync(ActionRequest request)
     {
         var actionName = request.action?.Trim().ToLowerInvariant();
@@ -2185,6 +2187,14 @@ internal static class GameActionService
 
     private static async Task<ActionResponsePayload> ExecuteRunConsoleCommandAsync(ActionRequest request)
     {
+        if (!DebugActionsEnabled)
+        {
+            throw new ApiException(409, "invalid_action", "run_console_command is disabled. Set STS2_ENABLE_DEBUG_ACTIONS=1 for development use.", new
+            {
+                action = "run_console_command"
+            });
+        }
+
         var command = request.command?.Trim();
         if (string.IsNullOrWhiteSpace(command))
         {
@@ -2249,6 +2259,20 @@ internal static class GameActionService
         const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
         var field = typeof(NDevConsole).GetField("_devConsole", flags);
         return field?.GetValue(console) as DevConsole;
+    }
+
+    private static bool IsDebugActionsEnabled()
+    {
+        var raw = System.Environment.GetEnvironmentVariable("STS2_ENABLE_DEBUG_ACTIONS");
+        if (string.IsNullOrWhiteSpace(raw))
+        {
+            return false;
+        }
+
+        return raw.Equals("1", StringComparison.OrdinalIgnoreCase) ||
+               raw.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+               raw.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+               raw.Equals("on", StringComparison.OrdinalIgnoreCase);
     }
 
     private static async Task<ActionResponsePayload> ExecuteConfirmModalAsync()

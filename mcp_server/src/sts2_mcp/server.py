@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from fastmcp import FastMCP
 
 from .client import Sts2Client
+
+
+def _debug_tools_enabled() -> bool:
+    value = os.getenv("STS2_ENABLE_DEBUG_ACTIONS", "")
+    return value.lower() in {"1", "true", "yes", "on"}
 
 
 def create_server(client: Sts2Client | None = None) -> FastMCP:
@@ -593,17 +599,18 @@ def create_server(client: Sts2Client | None = None) -> FastMCP:
         """
         return sts2.discard_potion(option_index=option_index)
 
-    @mcp.tool
-    def run_console_command(command: str) -> dict[str, Any]:
-        """Run a game dev-console command for validation or debugging.
+    if _debug_tools_enabled():
+        @mcp.tool
+        def run_console_command(command: str) -> dict[str, Any]:
+            """Run a game dev-console command for validation or debugging.
 
-        Args:
-            command: raw dev-console command, for example "win".
+            Args:
+                command: raw dev-console command, for example "win".
 
-        This is primarily intended for local testing workflows where the
-        game's built-in dev console is available.
-        """
-        return sts2.run_console_command(command=command)
+            This tool is intentionally gated behind STS2_ENABLE_DEBUG_ACTIONS
+            and is meant only for local development / validation workflows.
+            """
+            return sts2.run_console_command(command=command)
 
     @mcp.tool
     def confirm_modal() -> dict[str, Any]:

@@ -56,7 +56,7 @@
 - `confirm_modal`
 - `dismiss_modal`
 - `return_to_main_menu`
-- `run_console_command`（调试 / 验证）
+- `run_console_command`（调试 / 验证，仅当 `STS2_ENABLE_DEBUG_ACTIONS=1` 时注册）
 
 ---
 
@@ -66,6 +66,10 @@
   - 默认值：`http://127.0.0.1:8080`
 - `STS2_API_TIMEOUT_SECONDS`
   - 默认值：`10`
+- `STS2_ENABLE_DEBUG_ACTIONS`
+  - 默认值：未设置 / `0`
+  - 作用：启用开发期 debug 工具，例如 `run_console_command`
+  - 发布建议：保持关闭
 
 ---
 

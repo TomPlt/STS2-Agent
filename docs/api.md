@@ -1220,3 +1220,11 @@
 | 游戏结束 | `game_over` / `return_to_main_menu` | 已实现，待实机验证 |
 
 新增字段与动作的详细说明见 [phase-5-full-chain.md](/C:/Users/chart/Documents/project/sp/docs/phase-5-full-chain.md)。
+
+### Debug 动作
+
+`run_console_command` 仅用于开发期调试 / 验证，默认关闭。
+
+- 启用方式：设置环境变量 `STS2_ENABLE_DEBUG_ACTIONS=1`
+- 发布建议：不要在正式发布默认配置中启用
+- 设计目标：用于本地实机验证提速，不应成为正式游玩 agent 的常规依赖
