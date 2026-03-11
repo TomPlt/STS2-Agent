@@ -2964,6 +2964,11 @@ internal static class GameActionService
         {
             await WaitForNextFrameAsync();
 
+            if (IsPotionUseAwaitingPlayerInput())
+            {
+                return false;
+            }
+
             if (HasPotionUseSettled(player, potionIndex, potion))
             {
                 return true;
@@ -3001,6 +3006,16 @@ internal static class GameActionService
 
     private static bool HasPotionUseSettled(Player player, int potionIndex, PotionModel potion)
     {
+        if (!HasPotionSlotTransitioned(player, potionIndex, potion))
+        {
+            return false;
+        }
+
+        return ArePlayerDrivenActionsSettled();
+    }
+
+    private static bool HasPotionSlotTransitioned(Player player, int potionIndex, PotionModel potion)
+    {
         if (potion.HasBeenRemovedFromState)
         {
             return true;
@@ -3012,6 +3027,17 @@ internal static class GameActionService
         }
 
         return !ReferenceEquals(player.PotionSlots[potionIndex], potion);
+    }
+
+    private static bool IsPotionUseAwaitingPlayerInput()
+    {
+        var currentScreen = ActiveScreenContext.Instance.GetCurrentScreen();
+        if (currentScreen is NCardGridSelectionScreen or NChooseACardSelectionScreen)
+        {
+            return true;
+        }
+
+        return GameStateService.TryGetCombatHandSelection(currentScreen, out _);
     }
 
     private static async Task<ActionResponsePayload> ExecuteModalButtonAsync(
