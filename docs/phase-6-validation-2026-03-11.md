@@ -58,6 +58,9 @@ test-debug-console-gating.ps1: disabled -> invalid_action, enabled -> completed
 - A protocol gap was found and fixed in commit `637deaa`: the state previously exposed `star_cost` but did not distinguish star-X cards from fixed-cost star cards
 - After the patch, `Stardust` now reports `star_costs_x=true` while preserving the current resolved `star_cost`
 - `Bullet Time` was revalidated against live combat state, and the MCP payload reflected in-combat cost changes after the card resolved
+- Generated-card combat behavior was also sampled live:
+  - `JACK_OF_ALL_TRADES` generated `SALVO` into hand, and the new hand card exposed a stable `card_id`, target metadata, and playability state
+  - `WHITE_NOISE` generated `NEUTRON_AEGIS`; the hand payload reported `energy_cost = 0` while the card database baseline is `1`, confirming that temporary free-this-turn modifiers survive into MCP state
 
 ### Debug gating
 

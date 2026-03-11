@@ -32,7 +32,7 @@ The remaining risk is mechanic breadth, especially around rare card/relic/event 
 | Dynamic energy cost | combat-time cost changes, temporary discounts | Medium | `Bullet Time` was validated live | Cost increases, generated cards, and cross-turn resets need broader coverage |
 | Star resource / star cost | Regent stars, fixed star cost, star-X cost | High | `Falling Star` and `Stardust` validated; `star_costs_x` gap was fixed | More Regent-only interactions should be sampled |
 | Unplayable reasons | insufficient energy, insufficient stars | Medium | `not_enough_stars` was validated | Other reasons need explicit sampling and naming review |
-| Created / transformed cards in combat | temporary cards, generated cards, copied cards | Low | Protocol can already expose generic card fields | Need live checks for generated-card IDs and dynamic costs |
+| Created / transformed cards in combat | temporary cards, generated cards, copied cards | Medium | `JACK_OF_ALL_TRADES` generated `SALVO` with a stable hand payload; `WHITE_NOISE` generated `NEUTRON_AEGIS` and the hand payload reflected its temporary free cost | Copied cards and transform-in-combat variants still need more coverage |
 | Event/relic/card cross-hooks | rewards mutated by relics, event-side deck mutation, rerolls | Low | Basic event and reward hooks are working | Rare hook stacks still need deliberate probes |
 | Character breadth | non-Regent characters and their unique resources | Low | Regent was intentionally stressed | Other launch characters still need targeted coverage passes |
 | Post-patch resilience | payload/action consistency after a game update | Unknown | Current validation is good for `v0.98.3` | Re-run this matrix after every STS2 content patch |
