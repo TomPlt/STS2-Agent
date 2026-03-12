@@ -5,7 +5,6 @@
 - `STS2AIAgent` Mod：把游戏状态和操作暴露为本地 HTTP API。
 - `mcp_server`：把本地 HTTP API 包装成 MCP Server，供支持 MCP 的客户端直接调用。
 
-这份 README 只写发布版用户真正需要的内容，默认以 Windows 为例。
 
 ## 你会下载到什么
 
@@ -155,14 +154,6 @@ http://127.0.0.1:8765/mcp
 
 `run_console_command` 这类调试工具默认关闭，发布建议保持关闭。
 
-## 面向发布者的最小检查
-
-如果你是在本仓库里自己构建发布包，推荐至少执行：
-
-```powershell
-powershell -ExecutionPolicy Bypass -File ".\scripts\build-mod.ps1" -Configuration Release
-powershell -ExecutionPolicy Bypass -File ".\scripts\preflight-release.ps1"
-```
 
 ## 相关目录
 
