@@ -31,8 +31,8 @@ fi
 
 cd -- "$mcp_root"
 
-echo "[start-mcp-stdio] Syncing dependencies..."
-uv sync
+echo "[start-mcp-stdio] Syncing dependencies..." >&2
+uv sync >&2
 
-echo "[start-mcp-stdio] Starting MCP server over stdio..."
+echo "[start-mcp-stdio] Starting MCP server over stdio..." >&2
 exec uv run sts2-mcp-server

@@ -248,7 +248,7 @@ PY
 
 sts2_json_value() {
   local path="$1"
-  python3 - "$path" <<'PY'
+  python3 -c '
 import json
 import sys
 
@@ -266,7 +266,7 @@ elif isinstance(value, bool):
     print("true" if value else "false")
 else:
     print(value)
-PY
+' "$path"
 }
 
 sts2_run_validation() {
