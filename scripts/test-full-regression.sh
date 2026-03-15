@@ -60,6 +60,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+export REPO_ROOT="$repo_root"
+
 record_result() {
   local name="$1"
   local status="$2"
@@ -184,7 +186,7 @@ PY
 if ! run_step "stop running game before install" sts2_stop_running_games; then
   failed=1
   failure_message="failed to stop running game before install"
-elif ! run_step "build mod" "$script_dir/build-mod.sh" --configuration "$configuration"; then
+elif ! run_step "build mod" "$script_dir/build-mod.sh" --repo-root "$repo_root" --configuration "$configuration"; then
   failed=1
   failure_message="build mod failed"
 elif ! run_step "mod load deep check" "$script_dir/test-mod-load.sh" --deep-check --api-port "$api_port"; then
@@ -208,6 +210,9 @@ elif ! run_step "ensure active-run MAIN_MENU for main-menu lifecycle" ensure_act
 elif ! run_step "main-menu active-run lifecycle" run_flow_script "test-main-menu-active-run.sh"; then
   failed=1
   failure_message="main-menu active-run lifecycle failed"
+elif ! run_step "state invariants after main-menu lifecycle" run_flow_script "test-state-invariants.sh"; then
+  failed=1
+  failure_message="state invariants after main-menu lifecycle failed"
 elif ! run_step "start debug session for combat hand confirm flow" restart_debug_session; then
   failed=1
   failure_message="start debug session for combat hand confirm flow failed"
@@ -217,6 +222,9 @@ elif ! run_step "ensure active-run MAIN_MENU for combat hand confirm flow" ensur
 elif ! run_step "combat hand confirm flow" run_flow_script "test-combat-hand-confirm-flow.sh"; then
   failed=1
   failure_message="combat hand confirm flow failed"
+elif ! run_step "state invariants after combat hand confirm flow" run_flow_script "test-state-invariants.sh"; then
+  failed=1
+  failure_message="state invariants after combat hand confirm flow failed"
 elif ! run_step "start debug session for deferred potion flow" restart_debug_session; then
   failed=1
   failure_message="start debug session for deferred potion flow failed"
@@ -226,6 +234,9 @@ elif ! run_step "ensure active-run MAIN_MENU for deferred potion flow" ensure_ac
 elif ! run_step "deferred potion flow" run_flow_script "test-deferred-potion-flow.sh"; then
   failed=1
   failure_message="deferred potion flow failed"
+elif ! run_step "state invariants after deferred potion flow" run_flow_script "test-state-invariants.sh"; then
+  failed=1
+  failure_message="state invariants after deferred potion flow failed"
 elif ! run_step "start debug session for target index contracts" restart_debug_session; then
   failed=1
   failure_message="start debug session for target index contracts failed"
@@ -235,6 +246,9 @@ elif ! run_step "ensure active-run MAIN_MENU for target index contracts" ensure_
 elif ! run_step "target index contracts" run_flow_script "test-target-index-contract.sh"; then
   failed=1
   failure_message="target index contracts failed"
+elif ! run_step "state invariants after target index contracts" run_flow_script "test-state-invariants.sh"; then
+  failed=1
+  failure_message="state invariants after target index contracts failed"
 elif ! run_step "start debug session for enemy intents payload" restart_debug_session; then
   failed=1
   failure_message="start debug session for enemy intents payload failed"
@@ -244,6 +258,12 @@ elif ! run_step "ensure active-run MAIN_MENU for enemy intents payload" ensure_a
 elif ! run_step "enemy intents payload" run_flow_script "test-enemy-intents-payload.sh"; then
   failed=1
   failure_message="enemy intents payload failed"
+elif ! run_step "state invariants after enemy intents payload" run_flow_script "test-state-invariants.sh"; then
+  failed=1
+  failure_message="state invariants after enemy intents payload failed"
+elif ! run_step "multiplayer lobby flow" "$script_dir/test-multiplayer-lobby-flow.sh" --host-api-port "$api_port" --client-api-port "$((api_port + 1))"; then
+  failed=1
+  failure_message="multiplayer lobby flow failed"
 elif ! run_step "start debug session for new-run lifecycle" restart_debug_session; then
   failed=1
   failure_message="start debug session for new-run lifecycle failed"
@@ -253,6 +273,9 @@ elif ! run_step "ensure active-run MAIN_MENU for new-run lifecycle" ensure_activ
 elif ! run_step "new-run lifecycle" run_flow_script "test-new-run-lifecycle.sh" --timeout-sec 15 --request-retries 3 --retry-delay-ms 500 --poll-attempts 120 --poll-delay-ms 250; then
   failed=1
   failure_message="new-run lifecycle failed"
+elif ! run_step "state invariants after new-run lifecycle" run_flow_script "test-state-invariants.sh"; then
+  failed=1
+  failure_message="state invariants after new-run lifecycle failed"
 fi
 
 finish_summary

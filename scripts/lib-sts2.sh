@@ -211,11 +211,12 @@ import subprocess
 import sys
 
 exe_path = sys.argv[1].strip()
+binary_names = ("Slay the Spire 2", "SlayTheSpire2")
 
 
 def executable_variants(path: pathlib.Path) -> set[str]:
     variants = {str(path)}
-    for name in ("Slay the Spire 2", "SlayTheSpire2"):
+    for name in binary_names:
         variants.add(str(path.with_name(name)))
     return variants
 
@@ -227,7 +228,6 @@ def default_candidates() -> set[str]:
         pathlib.Path.home() / ".steam/steam/steamapps/common/Slay the Spire 2",
     ]
     bundle_names = ("Slay the Spire 2.app", "SlayTheSpire2.app")
-    binary_names = ("Slay the Spire 2", "SlayTheSpire2")
 
     for root in roots:
         for bundle_name in bundle_names:
@@ -241,10 +241,15 @@ def default_candidates() -> set[str]:
     return candidates
 
 
+def command_matches_known_binary(command: str) -> bool:
+    return re.search(r"(^|/)(Slay the Spire 2|SlayTheSpire2)(\s|$)", command) is not None
+
+
 if exe_path:
     targets = executable_variants(pathlib.Path(exe_path))
 else:
     targets = default_candidates()
+    targets.update(binary_names)
 
 try:
     process_table = subprocess.check_output(["ps", "-axww", "-o", "pid=,command="], text=True)
@@ -283,6 +288,10 @@ for line in process_table.splitlines():
         continue
 
     if any(command == target or command.startswith(target + " ") for target in targets):
+        print(pid_text)
+        continue
+
+    if not exe_path and command_matches_known_binary(command):
         print(pid_text)
 PY
 }

@@ -125,8 +125,8 @@ uv run python -c "from sts2_mcp.client import Sts2Client; import json; print(jso
 
 说明：
 
-- 这条 `bash` 回归链路覆盖构建、Mod 装载、debug gating、MCP tool profile、主菜单生命周期、新局生命周期，以及几条关键战斗 / 药水 / target contract 检查。
-- 更重的多人大厅验证和完整状态不变量脚本目前仍主要保留在 PowerShell 版本。
+- 这条 `bash` 回归链路覆盖构建、Mod 装载、debug gating、MCP tool profile、主菜单生命周期、新局生命周期、完整状态不变量，以及双进程多人大厅流。
+- 也可以单独运行 `./scripts/test-state-invariants.sh` 和 `./scripts/test-multiplayer-lobby-flow.sh` 做定向验证。
 
 ## 6. Troubleshooting
 
