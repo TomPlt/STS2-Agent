@@ -3,12 +3,35 @@ from __future__ import annotations
 import json
 import logging
 import os
+import socket
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
 from urllib import error, request
 
 logger = logging.getLogger("sts2_mcp")
+
+
+def _set_socket_read_timeout(response: Any, timeout: float) -> None:
+    fp = getattr(response, "fp", None)
+    candidates = [
+        getattr(getattr(fp, "raw", None), "_sock", None),
+        getattr(fp, "_sock", None),
+        getattr(getattr(getattr(fp, "fp", None), "raw", None), "_sock", None),
+        getattr(response, "_sock", None),
+        getattr(response, "sock", None),
+    ]
+
+    for candidate in candidates:
+        if candidate is None or not hasattr(candidate, "settimeout"):
+            continue
+
+        try:
+            candidate.settimeout(timeout)
+            return
+        except OSError:
+            continue
+
 
 _DEFAULT_READ_TIMEOUT = 10.0
 _DEFAULT_ACTION_TIMEOUT = 30.0
@@ -65,6 +88,7 @@ class Sts2Client:
         *,
         read_timeout: float | None = None,
         include_comments: bool = False,
+        deadline: float | None = None,
     ) -> Iterator[dict[str, Any]]:
         timeout = read_timeout or float(os.getenv("STS2_EVENT_READ_TIMEOUT", "90"))
         http_request = request.Request(
@@ -83,6 +107,12 @@ class Sts2Client:
                 data_lines: list[str] = []
 
                 while True:
+                    if deadline is not None:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise socket.timeout("timed out")
+                        _set_socket_read_timeout(response, max(remaining, 0.05))
+
                     raw_line = response.readline()
                     if not raw_line:
                         return
@@ -143,6 +173,17 @@ class Sts2Client:
                 details={"reason": str(exc.reason), "path": "/events/stream"},
                 retryable=True,
             ) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise Sts2ApiError(
+                status_code=0,
+                code="connection_error",
+                message=(
+                    f"Timed out while reading the STS2 mod event stream at {self._base_url}. "
+                    "The client will retry until the overall wait deadline expires."
+                ),
+                details={"reason": str(exc), "path": "/events/stream"},
+                retryable=True,
+            ) from exc
 
     def wait_for_event(
         self,
@@ -158,16 +199,18 @@ class Sts2Client:
             if remaining <= 0:
                 return None
 
-            read_timeout = min(max(remaining, 1.0), 30.0)
+            read_timeout = max(remaining, 0.05)
             try:
-                for event in self.iter_events(read_timeout=read_timeout):
+                for event in self.iter_events(read_timeout=read_timeout, deadline=deadline):
                     event_name = str(event.get("event", ""))
                     if not target_names or event_name in target_names:
                         return event
                 return None
             except Sts2ApiError as exc:
-                if exc.code != "connection_error" or time.monotonic() >= deadline:
+                if exc.code != "connection_error":
                     raise
+                if time.monotonic() >= deadline:
+                    return None
 
     def end_turn(self) -> dict[str, Any]:
         return self.execute_action(
