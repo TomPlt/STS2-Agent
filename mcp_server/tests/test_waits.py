@@ -42,13 +42,21 @@ class DummyClient:
 
 
 class WaitBehaviorTests(unittest.TestCase):
-    def test_wait_for_event_uses_absolute_deadline_slices(self) -> None:
+    def test_wait_for_event_restarts_on_heartbeat_not_every_second(self) -> None:
         client = Sts2Client(base_url="http://127.0.0.1:8080")
         clock = FakeClock()
         observed_timeouts: list[float] = []
+        call_count = 0
 
         def fake_iter_events(*, read_timeout=None, include_comments=False):
+            nonlocal call_count
+            call_count += 1
             observed_timeouts.append(float(read_timeout))
+            if call_count == 1:
+                clock.now += 15.0
+                yield {"comment": "heartbeat"}
+                return
+
             clock.now += float(read_timeout)
             raise Sts2ApiError(
                 status_code=0,
@@ -61,10 +69,10 @@ class WaitBehaviorTests(unittest.TestCase):
         client.iter_events = fake_iter_events  # type: ignore[method-assign]
 
         with patch("sts2_mcp.client.time.monotonic", new=clock.monotonic):
-            event = client.wait_for_event(timeout=2.4)
+            event = client.wait_for_event(timeout=20.0)
 
         self.assertIsNone(event)
-        self.assertEqual([round(value, 2) for value in observed_timeouts], [1.0, 1.0, 0.4])
+        self.assertEqual([round(value, 2) for value in observed_timeouts], [20.0, 5.0])
 
     def test_wait_until_actionable_returns_immediately_when_state_is_actionable(self) -> None:
         client = DummyClient(states=[{"available_actions": ["proceed"]}])

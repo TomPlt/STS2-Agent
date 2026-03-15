@@ -15,7 +15,6 @@ _DEFAULT_READ_TIMEOUT = 10.0
 _DEFAULT_ACTION_TIMEOUT = 30.0
 _DEFAULT_MAX_RETRIES = 2
 _RETRY_BACKOFF_BASE = 0.5
-_EVENT_WAIT_SLICE_SECONDS = 1.0
 
 
 @dataclass(slots=True)
@@ -171,20 +170,33 @@ class Sts2Client:
             if remaining <= 0:
                 return None
 
-            # Use short per-read time slices so heartbeat traffic cannot keep
-            # extending the overall deadline beyond the caller's timeout.
-            read_timeout = min(max(remaining, 0.05), _EVENT_WAIT_SLICE_SECONDS)
+            read_timeout = max(remaining, 0.05)
+            stream = self.iter_events(read_timeout=read_timeout, include_comments=True)
+            restart_stream = False
             try:
-                for event in self.iter_events(read_timeout=read_timeout):
+                for event in stream:
+                    if "comment" in event:
+                        if time.monotonic() >= deadline:
+                            return None
+                        restart_stream = True
+                        break
+
                     event_name = str(event.get("event", ""))
                     if not target_names or event_name in target_names:
                         return event
+
+                if restart_stream:
+                    continue
                 return None
             except Sts2ApiError as exc:
                 if exc.code != "connection_error":
                     raise
                 if time.monotonic() >= deadline:
                     return None
+            finally:
+                close = getattr(stream, "close", None)
+                if callable(close):
+                    close()
 
     def end_turn(self) -> dict[str, Any]:
         return self.execute_action(
