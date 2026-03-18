@@ -1,8 +1,16 @@
 param(
-    [string]$RepoRoot = "C:/Users/chart/Documents/project/sp"
+    [string]$RepoRoot
 )
 
 $ErrorActionPreference = "Stop"
+if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
+    $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+    if ([string]::IsNullOrWhiteSpace($scriptDir)) {
+        throw "Unable to resolve repository root from script location."
+    }
+    $RepoRoot = (Resolve-Path (Join-Path $scriptDir "..")).Path
+}
+
 $mcpRoot = Join-Path $RepoRoot "mcp_server"
 
 Push-Location $mcpRoot
@@ -16,6 +24,7 @@ from sts2_mcp.server import create_server
 
 ESSENTIAL_TOOLS = {"health_check", "get_game_state", "get_available_actions", "act"}
 LAYERED_TOOLS = {
+    "get_agent_view",
     "create_planner_handoff",
     "create_combat_handoff",
     "complete_combat_handoff",

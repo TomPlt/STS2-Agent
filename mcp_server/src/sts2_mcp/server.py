@@ -160,12 +160,7 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
 
     @mcp.tool
     def get_game_state() -> dict[str, Any]:
-        """Read the compact agent-facing game state snapshot."""
-        return _agent_state()
-
-    @mcp.tool
-    def get_raw_game_state() -> dict[str, Any]:
-        """Read the full raw `/state` snapshot for debugging or schema inspection."""
+        """Read a full snapshot of the current game state."""
         return sts2.get_state()
 
     @mcp.tool
@@ -174,6 +169,11 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
         return sts2.get_available_actions()
 
     if profile in {"full", "layered"}:
+        @mcp.tool
+        def get_agent_view() -> dict[str, Any]:
+            """Read the compact agent-facing game state snapshot."""
+            return _agent_state()
+
         @mcp.tool
         def get_planner_context(planner_note: str | None = None) -> dict[str, Any]:
             """Build a planner-focused snapshot with route branches and linked event knowledge."""
