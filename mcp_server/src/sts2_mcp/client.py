@@ -7,7 +7,8 @@ import socket
 import time
 from dataclasses import dataclass
 from typing import Any, Iterable, Iterator
-from urllib import error, request
+
+import requests
 
 logger = logging.getLogger("sts2_mcp")
 
@@ -68,10 +69,15 @@ class Sts2Client:
         self._read_timeout = read_timeout or float(os.getenv("STS2_API_READ_TIMEOUT", str(_DEFAULT_READ_TIMEOUT)))
         self._action_timeout = action_timeout or float(os.getenv("STS2_API_ACTION_TIMEOUT", str(_DEFAULT_ACTION_TIMEOUT)))
         self._max_retries = max_retries if max_retries is not None else int(os.getenv("STS2_API_MAX_RETRIES", str(_DEFAULT_MAX_RETRIES)))
+        self._session = requests.Session()
 
     @property
     def base_url(self) -> str:
         return self._base_url
+
+    def __del__(self) -> None:
+        if hasattr(self, "_session"):
+            self._session.close()
 
     def get_health(self) -> dict[str, Any]:
         return self._request("GET", "/health")
@@ -91,17 +97,18 @@ class Sts2Client:
         deadline: float | None = None,
     ) -> Iterator[dict[str, Any]]:
         timeout = read_timeout or float(os.getenv("STS2_EVENT_READ_TIMEOUT", "90"))
-        http_request = request.Request(
-            url=f"{self._base_url}/events/stream",
-            method="GET",
-            headers={
-                "Accept": "text/event-stream",
-                "Cache-Control": "no-cache",
-            },
-        )
+        headers = {
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache",
+        }
 
         try:
-            with request.urlopen(http_request, timeout=timeout) as response:
+            with self._session.get(
+                f"{self._base_url}/events/stream",
+                headers=headers,
+                stream=True,
+                timeout=timeout,
+            ) as response:
                 event_id: str | None = None
                 event_name: str | None = None
                 data_lines: list[str] = []
@@ -160,9 +167,17 @@ class Sts2Client:
                         data_lines.append(value)
                     elif field == "retry":
                         continue
-        except error.HTTPError as exc:
-            raise self._build_api_error(exc.code, exc.read()) from exc
-        except error.URLError as exc:
+        except requests.HTTPError as exc:
+            if exc.response is not None:
+                raise self._build_api_error(exc.response.status_code, exc.response.content) from exc
+            raise Sts2ApiError(
+                status_code=0,
+                code="connection_error",
+                message="HTTP error occurred while reading event stream",
+                details={"reason": str(exc), "path": "/events/stream"},
+                retryable=True,
+            ) from exc
+        except requests.ConnectionError as exc:
             raise Sts2ApiError(
                 status_code=0,
                 code="connection_error",
@@ -170,10 +185,10 @@ class Sts2Client:
                     f"Cannot reach STS2 mod event stream at {self._base_url}. "
                     "Ensure the game is running and the mod is loaded."
                 ),
-                details={"reason": str(exc.reason), "path": "/events/stream"},
+                details={"reason": str(exc), "path": "/events/stream"},
                 retryable=True,
             ) from exc
-        except (TimeoutError, socket.timeout) as exc:
+        except (TimeoutError, socket.timeout, requests.Timeout) as exc:
             raise Sts2ApiError(
                 status_code=0,
                 code="connection_error",
@@ -605,13 +620,13 @@ class Sts2Client:
         is_action: bool = False,
     ) -> dict[str, Any]:
         timeout = self._action_timeout if is_action else self._read_timeout
-        raw_payload = None
+        json_payload = None
         headers: dict[str, str] = {
             "Accept": "application/json",
         }
 
         if payload is not None:
-            raw_payload = json.dumps(payload).encode("utf-8")
+            json_payload = payload
             headers["Content-Type"] = "application/json; charset=utf-8"
 
         last_error: Sts2ApiError | None = None
@@ -623,21 +638,30 @@ class Sts2Client:
                 logger.info("Retry %d/%d for %s %s in %.1fs", attempt, self._max_retries, method, path, delay)
                 time.sleep(delay)
 
-            http_request = request.Request(
-                url=f"{self._base_url}{path}",
-                method=method,
-                data=raw_payload,
-                headers=headers,
-            )
-
             try:
-                with request.urlopen(http_request, timeout=timeout) as response:
-                    return self._decode_success(response.read())
-            except error.HTTPError as exc:
-                last_error = self._build_api_error(exc.code, exc.read())
+                response = self._session.request(
+                    method=method,
+                    url=f"{self._base_url}{path}",
+                    json=json_payload,
+                    headers=headers,
+                    timeout=timeout,
+                )
+                response.raise_for_status()
+                return self._decode_success(response.content)
+            except requests.HTTPError as exc:
+                if exc.response is not None:
+                    last_error = self._build_api_error(exc.response.status_code, exc.response.content)
+                else:
+                    last_error = Sts2ApiError(
+                        status_code=0,
+                        code="connection_error",
+                        message="HTTP error occurred",
+                        details={"reason": str(exc), "path": path},
+                        retryable=True,
+                    )
                 if not last_error.retryable or attempt >= self._max_retries:
                     raise last_error
-            except error.URLError as exc:
+            except requests.ConnectionError as exc:
                 last_error = Sts2ApiError(
                     status_code=0,
                     code="connection_error",
@@ -645,7 +669,20 @@ class Sts2Client:
                         f"Cannot reach STS2 mod at {self._base_url}. "
                         "Ensure the game is running and the mod is loaded."
                     ),
-                    details={"reason": str(exc.reason), "path": path},
+                    details={"reason": str(exc), "path": path},
+                    retryable=True,
+                )
+                if attempt >= self._max_retries:
+                    raise last_error
+            except (requests.Timeout, requests.ConnectTimeout, requests.ReadTimeout) as exc:
+                last_error = Sts2ApiError(
+                    status_code=0,
+                    code="connection_error",
+                    message=(
+                        f"Timed out while contacting STS2 mod at {self._base_url}. "
+                        "Ensure the game is running and the mod is loaded."
+                    ),
+                    details={"reason": str(exc), "path": path},
                     retryable=True,
                 )
                 if attempt >= self._max_retries:
