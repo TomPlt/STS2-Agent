@@ -23,4 +23,5 @@ _bmad-output/
 # Dev tooling
 .claude/
 .serena/
+.worktrees/
 node_modules/
