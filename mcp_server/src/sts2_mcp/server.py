@@ -400,6 +400,31 @@ def _detect_scene_from_screen(screen: str) -> str:
     return SCENE_MENU
 
 
+def _extract_agent_view(raw: dict[str, Any]) -> dict[str, Any]:
+    """Extract compact agent_view from a raw state payload, stripping null sections."""
+    state = raw.get("state") or raw
+    agent_view = state.get("agent_view")
+    if not isinstance(agent_view, dict):
+        agent_view = state
+
+    # Strip null top-level keys to save tokens
+    return {k: v for k, v in agent_view.items() if v is not None}
+
+
+def _compact_act_response(raw: dict[str, Any]) -> dict[str, Any]:
+    """Reduce an /action response to only the essential fields."""
+    result: dict[str, Any] = {}
+    for key in ("action", "status", "stable", "message"):
+        if key in raw:
+            result[key] = raw[key]
+
+    state = raw.get("state")
+    if isinstance(state, dict):
+        result["state"] = _extract_agent_view(state)
+
+    return result
+
+
 def create_server(client: Sts2Client | None = None, tool_profile: str | None = None) -> FastMCP:
     sts2 = client or Sts2Client()
     knowledge = Sts2KnowledgeBase()
@@ -412,12 +437,13 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
         agent_view = state.get("agent_view")
         if isinstance(agent_view, dict):
             if "available_actions" not in agent_view and isinstance(agent_view.get("actions"), list):
-                return {
+                agent_view = {
                     **agent_view,
                     "available_actions": agent_view["actions"],
                 }
-            return agent_view
-        return state
+            # Strip null top-level keys to save tokens
+            return {k: v for k, v in agent_view.items() if v is not None}
+        return {k: v for k, v in state.items() if v is not None}
 
     def _is_actionable_state(state: dict[str, Any]) -> bool:
         actions = state.get("available_actions")
@@ -445,7 +471,7 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
             return {
                 "matched": False,
                 "event": None,
-                "state": state,
+                "state": _extract_agent_view(state),
                 "actions": sts2.get_available_actions(),
                 "timeout_seconds": timeout,
                 "source": "state",
@@ -483,7 +509,7 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
         return {
             "matched": event is not None,
             "event": event,
-            "state": state,
+            "state": _extract_agent_view(state),
             "actions": sts2.get_available_actions(),
             "timeout_seconds": timeout,
             "source": source,
@@ -746,7 +772,7 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
         if normalized == "run_console_command":
             raise RuntimeError("run_console_command is gated separately and must use its own tool when enabled.")
 
-        return sts2.execute_action(
+        raw = sts2.execute_action(
             normalized,
             card_index=card_index,
             target_index=target_index,
@@ -757,6 +783,87 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
                 "tool_profile": profile,
             },
         )
+        return _compact_act_response(raw)
+
+    @mcp.tool
+    def play_sequence(actions: str) -> dict[str, Any]:
+        """Execute multiple actions in sequence, returning state only once at the end.
+
+        This dramatically reduces token usage by batching a full turn into one call.
+        Pass a JSON array of action objects. Each object must have an `action` field
+        and optionally `card_index`, `target_index`, or `option_index`.
+
+        Example (play two cards then end turn):
+            [
+                {"action": "play_card", "card_index": 0, "target_index": 0},
+                {"action": "play_card", "card_index": 1},
+                {"action": "end_turn"}
+            ]
+
+        Returns the compact state after the final action, plus a summary of each step.
+        Stops early if any action fails.
+        """
+        import json as _json
+
+        try:
+            steps = _json.loads(actions) if isinstance(actions, str) else actions
+        except _json.JSONDecodeError as exc:
+            return {"error": f"Invalid JSON: {exc}"}
+
+        if not isinstance(steps, list) or not steps:
+            return {"error": "Expected a non-empty JSON array of action objects."}
+
+        results: list[dict[str, Any]] = []
+        last_raw: dict[str, Any] = {}
+
+        for i, step in enumerate(steps):
+            if not isinstance(step, dict) or "action" not in step:
+                return {
+                    "error": f"Step {i}: each element must be an object with an 'action' field.",
+                    "completed": results,
+                }
+
+            action_name = step["action"].strip().lower()
+            if action_name == "run_console_command":
+                return {
+                    "error": f"Step {i}: run_console_command is not allowed in sequences.",
+                    "completed": results,
+                }
+
+            try:
+                last_raw = sts2.execute_action(
+                    action_name,
+                    card_index=step.get("card_index"),
+                    target_index=step.get("target_index"),
+                    option_index=step.get("option_index"),
+                    client_context={
+                        "source": "mcp",
+                        "tool_name": "play_sequence",
+                        "tool_profile": profile,
+                        "step": i,
+                    },
+                )
+                results.append({
+                    "step": i,
+                    "action": action_name,
+                    "status": last_raw.get("status", "unknown"),
+                })
+            except Exception as exc:
+                results.append({
+                    "step": i,
+                    "action": action_name,
+                    "status": "error",
+                    "error": str(exc),
+                })
+                return {
+                    "completed": results,
+                    "state": _extract_agent_view(last_raw) if last_raw else None,
+                }
+
+        return {
+            "completed": results,
+            "state": _extract_agent_view(last_raw) if last_raw else None,
+        }
 
     if profile == "full":
         _register_legacy_action_tools(mcp, sts2)
