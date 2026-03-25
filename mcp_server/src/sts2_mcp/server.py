@@ -221,12 +221,10 @@ def _load_game_data() -> dict[str, Any]:
 
 
 def _add_case_insensitive_item_id(index: dict[str, Any], item_id: str, item: Any) -> None:
-    normalized = item_id.strip()
+    normalized = item_id.strip().lower()  # Single canonical form
     if not normalized:
         return
     index[normalized] = item
-    index[normalized.upper()] = item
-    index[normalized.lower()] = item
 
 
 def _ensure_game_data_index(collection: str) -> dict[str, Any]:
@@ -268,7 +266,7 @@ def _ensure_game_data_index(collection: str) -> dict[str, Any]:
 
 
 def _lookup_game_data_item(index: dict[str, Any], item_id: str) -> Any:
-    return index.get(item_id) or index.get(item_id.upper()) or index.get(item_id.lower())
+    return index.get(item_id.strip().lower())  # Single lookup
 
 
 def _build_game_data_tool_error(collection: str, exc: Exception) -> dict[str, Any]:
