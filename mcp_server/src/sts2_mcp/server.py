@@ -5,10 +5,12 @@ import os
 import threading
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from fastmcp import FastMCP
 
+from .analyzer import CombatAnalyzer
 from .client import Sts2Client
 from .handoff import Sts2HandoffService
 from .knowledge import Sts2KnowledgeBase
@@ -432,6 +434,9 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
     profile = _normalize_tool_profile(tool_profile)
     mcp = FastMCP("STS2 AI Agent")
 
+    _game_data_dir = Path(__file__).resolve().parent.parent.parent / "data" / "eng"
+    combat_analyzer = CombatAnalyzer(_game_data_dir)
+
     def _agent_state() -> dict[str, Any]:
         state = sts2.get_state()
         agent_view = state.get("agent_view")
@@ -534,6 +539,12 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
     def get_available_actions() -> list[dict[str, Any]]:
         """List currently executable actions with `requires_index` and `requires_target` hints."""
         return sts2.get_available_actions()
+
+    @mcp.tool
+    def evaluate_combat_state() -> dict[str, Any]:
+        """Analyze current combat and return survival, lethal, potion, synergy, and energy recommendations."""
+        state = _agent_state()
+        return combat_analyzer.evaluate(state)
 
     if profile in {"full", "layered"}:
         @mcp.tool
