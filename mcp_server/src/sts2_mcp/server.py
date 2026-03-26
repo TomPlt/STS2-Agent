@@ -457,9 +457,11 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
     def _wait_until_actionable_impl(
         timeout_seconds: float,
         *,
+        mode: str | None = None,
         monotonic: Callable[[], float] = time.monotonic,
         sleep: Callable[[float], None] = time.sleep,
     ) -> dict[str, Any]:
+        is_instant = mode == "instant"
         timeout = max(0.1, float(timeout_seconds))
         actionable_events = {
             "player_action_window_opened",
@@ -478,14 +480,17 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
                 "actions": sts2.get_available_actions(),
                 "timeout_seconds": timeout,
                 "source": "state",
+                "mode": mode,
             }
 
         started_at = monotonic()
         event: dict[str, Any] | None = None
         source = "events"
 
+        # In instant mode, use shorter event wait window
+        event_wait = float(os.getenv("STS2_MCP_INSTANT_EVENT_WAIT_SECONDS", "0.6")) if is_instant else timeout
         try:
-            event = sts2.wait_for_event(event_names=actionable_events, timeout=timeout)
+            event = sts2.wait_for_event(event_names=actionable_events, timeout=event_wait)
         except Exception:
             event = None
             source = "polling"
@@ -495,7 +500,10 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
 
         if event is None and not _is_actionable_state(state) and remaining > 0:
             source = "polling"
-            interval = max(0.05, float(os.getenv("STS2_MCP_FALLBACK_POLL_SECONDS", "0.25")))
+            if is_instant:
+                interval = max(0.02, float(os.getenv("STS2_MCP_INSTANT_POLL_SECONDS", "0.05")))
+            else:
+                interval = max(0.05, float(os.getenv("STS2_MCP_FALLBACK_POLL_SECONDS", "0.25")))
             deadline = monotonic() + remaining
             baseline_signature = "|".join(sorted(str(name) for name in (state.get("available_actions") or [])))
 
@@ -516,6 +524,7 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
             "actions": sts2.get_available_actions(),
             "timeout_seconds": timeout,
             "source": source,
+            "mode": mode,
         }
 
     @mcp.tool
@@ -738,14 +747,16 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
         }
 
     @mcp.tool
-    def wait_until_actionable(timeout_seconds: float = 20.0) -> dict[str, Any]:
+    def wait_until_actionable(timeout_seconds: float = 20.0, mode: str | None = None) -> dict[str, Any]:
         """Wait until a new actionable phase is reported, then return fresh state.
 
         This reduces high-frequency polling between enemy turns, map transitions,
         and reward animations. Falls back to basic polling when SSE events are
         unavailable or no matching event arrives in time.
+
+        - `mode`: optional 'instant' or 'stable'. Instant uses shorter poll intervals.
         """
-        return _wait_until_actionable_impl(timeout_seconds)
+        return _wait_until_actionable_impl(timeout_seconds, mode=mode)
 
     @mcp.tool
     def act(
@@ -753,6 +764,9 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
         card_index: int | None = None,
         target_index: int | None = None,
         option_index: int | None = None,
+        mode: str | None = None,
+        wait_after_instant: bool = True,
+        settle_timeout_seconds: float = 5.0,
     ) -> dict[str, Any]:
         """Execute one currently available game action through the compact tool surface.
 
@@ -779,6 +793,9 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
             - Read `target_index_space` and `valid_target_indices` from state to know whether `target_index`
               refers to `combat.enemies[]` or `combat.players[]`.
             - `run_console_command` is intentionally excluded from this compact tool.
+            - `mode`: optional 'instant' or 'stable'. Instant skips animations.
+            - `wait_after_instant`: if True and mode='instant', auto-waits for actionable state.
+            - `settle_timeout_seconds`: timeout for post-instant settle wait.
         """
         normalized = action.strip().lower()
         if normalized == "run_console_command":
@@ -794,8 +811,25 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
                 "tool_name": "act",
                 "tool_profile": profile,
             },
+            mode=mode,
         )
-        return _compact_act_response(raw)
+        action_response = _compact_act_response(raw)
+
+        # Auto-settle after instant actions that return "pending"
+        if (
+            not wait_after_instant
+            or mode != "instant"
+            or str(action_response.get("status", "")) != "pending"
+        ):
+            return action_response
+
+        wait_result = _wait_until_actionable_impl(settle_timeout_seconds, mode=mode)
+        action_response["transition_state"] = action_response.get("state")
+        action_response["state"] = wait_result.get("state")
+        action_response["available_actions"] = wait_result.get("actions")
+        action_response["actionable"] = _is_actionable_state(wait_result.get("state") or {})
+        action_response["post_action_wait"] = wait_result
+        return action_response
 
     @mcp.tool
     def play_sequence(actions: str) -> dict[str, Any]:

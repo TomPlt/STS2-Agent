@@ -587,6 +587,12 @@ class Sts2Client:
             },
         )
 
+    def get_action_mode(self) -> dict[str, Any]:
+        return self._request("GET", "/action-mode")
+
+    def set_action_mode(self, mode: str) -> dict[str, Any]:
+        return self._request("POST", "/action-mode", payload={"mode": mode})
+
     def execute_action(
         self,
         action: str,
@@ -596,18 +602,22 @@ class Sts2Client:
         option_index: int | None = None,
         command: str | None = None,
         client_context: dict[str, Any] | None = None,
+        mode: str | None = None,
     ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "action": action,
+            "card_index": card_index,
+            "target_index": target_index,
+            "option_index": option_index,
+            "command": command,
+            "client_context": client_context,
+        }
+        if mode is not None:
+            payload["mode"] = mode
         return self._request(
             "POST",
             "/action",
-            payload={
-                "action": action,
-                "card_index": card_index,
-                "target_index": target_index,
-                "option_index": option_index,
-                "command": command,
-                "client_context": client_context,
-            },
+            payload=payload,
             is_action=True,
         )
 
