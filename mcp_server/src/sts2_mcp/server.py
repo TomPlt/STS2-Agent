@@ -27,10 +27,10 @@ SCENE_SHOP = "shop"
 SCENE_EVENT = "event"
 
 COMBAT_SCREEN_KEYWORDS = ("combat",)
-COMBAT_SCREEN_NAMES = {"combat_reward", "combat_victory"}
+COMBAT_SCREEN_NAMES = frozenset({"combat_reward", "combat_victory"})
 SHOP_SCREEN_KEYWORDS = ("shop", "merchant")
 EVENT_SCREEN_KEYWORDS = ("event",)
-EVENT_SCREEN_NAMES = {"event_room", "ancient_event"}
+EVENT_SCREEN_NAMES = frozenset({"event_room", "ancient_event"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -666,7 +666,7 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
             return _build_game_data_tool_error(collection=collection, exc=exc)
 
     @mcp.tool
-    def get_relevant_game_data(collection: str, item_ids: str) -> dict[str, Any]:
+    def get_relevant_game_data(collection: str, item_ids: str, scene: str | None = None) -> dict[str, Any]:
         """Return items with only the most relevant fields for the current game context.
 
         This automatically detects the current scene (combat/shop/event/menu) and returns
@@ -674,13 +674,16 @@ def create_server(client: Sts2Client | None = None, tool_profile: str | None = N
 
         - `collection`: e.g. `cards`, `relics`, `monsters`, `events`
         - `item_ids`: comma-separated ids
+        - `scene`: optional pre-detected scene ('combat', 'shop', 'event', 'menu').
+                  If not provided, auto-detects from game state.
 
         Recommended for most queries to save tokens and reduce uncertainty.
         """
-        # Auto-detect current scene from game state
-        state = sts2.get_state()
-        screen = state.get("screen", "")
-        scene = _detect_scene_from_screen(screen)
+        # Use provided scene or auto-detect from game state
+        if scene is None:
+            state = sts2.get_state()
+            screen = state.get("screen", "")
+            scene = _detect_scene_from_screen(screen)
         try:
             suggested_fields = _SCENE_FIELD_SETS.get(scene, {}).get(collection)
             if not suggested_fields:
