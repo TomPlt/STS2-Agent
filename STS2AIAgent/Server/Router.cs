@@ -44,7 +44,8 @@ private const string ModVersion = "0.5.2";
                         mod_version = ModVersion,
                         protocol_version = ProtocolVersion,
                         game_version = ReleaseInfoManager.Instance.ReleaseInfo?.Version ?? "unknown",
-                        status = "ready"
+                        status = "ready",
+                        default_action_mode = GameActionService.GetDefaultExecutionMode()
                     }
                 });
                 statusCode = 200;
@@ -83,6 +84,52 @@ private const string ModVersion = "0.5.2";
                 request.Url?.AbsolutePath == "/events/stream")
             {
                 statusCode = await HandleEventStreamAsync(response, cancellationToken);
+                return;
+            }
+
+            if (request.HttpMethod.Equals("GET", StringComparison.OrdinalIgnoreCase) &&
+                request.Url?.AbsolutePath == "/action-mode")
+            {
+                await WriteJsonAsync(response, 200, new
+                {
+                    ok = true,
+                    request_id = requestId,
+                    data = new
+                    {
+                        default_mode = GameActionService.GetDefaultExecutionMode(),
+                        supported_modes = new[] { "stable", "instant" }
+                    }
+                });
+                statusCode = 200;
+                return;
+            }
+
+            if (request.HttpMethod.Equals("POST", StringComparison.OrdinalIgnoreCase) &&
+                request.Url?.AbsolutePath == "/action-mode")
+            {
+                var modeRequest = await JsonHelper.DeserializeAsync<ActionModeRequest>(request.InputStream, cancellationToken);
+                var newMode = modeRequest?.mode?.Trim().ToLowerInvariant();
+
+                if (newMode != "stable" && newMode != "instant")
+                {
+                    throw new ApiException(400, "invalid_request",
+                        "mode must be 'stable' or 'instant'.",
+                        new { supported_modes = new[] { "stable", "instant" } });
+                }
+
+                GameActionService.SetDefaultExecutionMode(newMode);
+
+                await WriteJsonAsync(response, 200, new
+                {
+                    ok = true,
+                    request_id = requestId,
+                    data = new
+                    {
+                        default_mode = GameActionService.GetDefaultExecutionMode(),
+                        supported_modes = new[] { "stable", "instant" }
+                    }
+                });
+                statusCode = 200;
                 return;
             }
 
@@ -251,4 +298,9 @@ private const string ModVersion = "0.5.2";
         var bytes = Encoding.UTF8.GetBytes(text);
         return response.OutputStream.WriteAsync(bytes);
     }
+}
+
+internal sealed class ActionModeRequest
+{
+    public string? mode { get; init; }
 }

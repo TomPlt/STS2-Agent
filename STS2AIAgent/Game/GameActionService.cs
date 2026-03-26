@@ -43,66 +43,170 @@ using MegaCrit.Sts2.Core.Multiplayer.Game.Lobby;
 using MegaCrit.Sts2.Core.Rooms;
 using MegaCrit.Sts2.Core.Rewards;
 using MegaCrit.Sts2.Core.Timeline;
+using MegaCrit.Sts2.Core.Settings;
+using MegaCrit.Sts2.Core.Saves;
 using STS2AIAgent.Server;
 
 namespace STS2AIAgent.Game;
 
 internal static class GameActionService
 {
-    public static Task<ActionResponsePayload> ExecuteAsync(ActionRequest request)
-    {
-        var actionName = request.action?.Trim().ToLowerInvariant();
+    // --- Execution Mode ---
+    private const string StableExecutionMode = "stable";
+    private const string InstantExecutionMode = "instant";
+    private const string ActionModeEnvironmentVariable = "STS2_ACTION_MODE";
 
-        return actionName switch
+    private static string _defaultExecutionMode = ResolveDefaultExecutionMode();
+    private static FastModeType? _fastModeSnapshot;
+    private static bool _fastModeOverrideActive;
+
+    private static string ResolveDefaultExecutionMode()
+    {
+        var envValue = System.Environment.GetEnvironmentVariable(ActionModeEnvironmentVariable)?.Trim().ToLowerInvariant();
+        return string.Equals(envValue, InstantExecutionMode, StringComparison.Ordinal)
+            ? InstantExecutionMode
+            : StableExecutionMode;
+    }
+
+    public static string GetDefaultExecutionMode() => _defaultExecutionMode;
+
+    public static void SetDefaultExecutionMode(string mode)
+    {
+        _defaultExecutionMode = string.Equals(mode?.Trim().ToLowerInvariant(), InstantExecutionMode, StringComparison.Ordinal)
+            ? InstantExecutionMode
+            : StableExecutionMode;
+    }
+
+    private static string ResolveRequestMode(ActionRequest request)
+    {
+        var requestMode = request.mode?.Trim().ToLowerInvariant();
+        if (string.Equals(requestMode, InstantExecutionMode, StringComparison.Ordinal))
+            return InstantExecutionMode;
+        if (string.Equals(requestMode, StableExecutionMode, StringComparison.Ordinal))
+            return StableExecutionMode;
+        return _defaultExecutionMode;
+    }
+
+    private static bool IsInstantMode(string mode) =>
+        string.Equals(mode, InstantExecutionMode, StringComparison.Ordinal);
+
+    private static DateTime BuildDeadline(TimeSpan timeout, string mode)
+    {
+        if (timeout < TimeSpan.Zero) timeout = TimeSpan.Zero;
+        return IsInstantMode(mode) ? DateTime.UtcNow : DateTime.UtcNow + timeout;
+    }
+
+    // Overload for backward compat - uses stable mode
+    private static DateTime BuildDeadline(TimeSpan timeout) => BuildDeadline(timeout, StableExecutionMode);
+
+    private static void ApplyFastModeOverride(FastModeType targetMode)
+    {
+        var saveManager = SaveManager.Instance;
+        var prefs = saveManager?.PrefsSave;
+        if (prefs == null) return;
+
+        if (!_fastModeOverrideActive)
         {
-            "end_turn" => ExecuteEndTurnAsync(),
-            "play_card" => ExecutePlayCardAsync(request),
-            "continue_run" => ExecuteContinueRunAsync(),
-            "abandon_run" => ExecuteAbandonRunAsync(),
-            "open_character_select" => ExecuteOpenCharacterSelectAsync(),
-            "open_timeline" => ExecuteOpenTimelineAsync(),
-            "close_main_menu_submenu" => ExecuteCloseMainMenuSubmenuAsync(),
-            "choose_timeline_epoch" => ExecuteChooseTimelineEpochAsync(request),
-            "confirm_timeline_overlay" => ExecuteConfirmTimelineOverlayAsync(),
-            "choose_map_node" => ExecuteChooseMapNodeAsync(request),
-            "collect_rewards_and_proceed" => ExecuteCollectRewardsAndProceedAsync(),
-            "claim_reward" => ExecuteClaimRewardAsync(request),
-            "choose_reward_card" => ExecuteChooseRewardCardAsync(request),
-            "skip_reward_cards" => ExecuteSkipRewardCardsAsync(),
-            "select_deck_card" => ExecuteSelectDeckCardAsync(request),
-            "close_cards_view" => ExecuteCloseCardsViewAsync(),
-            "confirm_selection" => ExecuteConfirmSelectionAsync(),
-            "proceed" => ExecuteProceedAsync(),
-            "open_chest" => ExecuteOpenChestAsync(),
-            "choose_treasure_relic" => ExecuteChooseTreasureRelicAsync(request),
-            "choose_event_option" => ExecuteChooseEventOptionAsync(request),
-            "choose_rest_option" => ExecuteChooseRestOptionAsync(request),
-            "open_shop_inventory" => ExecuteOpenShopInventoryAsync(),
-            "close_shop_inventory" => ExecuteCloseShopInventoryAsync(),
-            "buy_card" => ExecuteBuyCardAsync(request),
-            "buy_relic" => ExecuteBuyRelicAsync(request),
-            "buy_potion" => ExecuteBuyPotionAsync(request),
-            "remove_card_at_shop" => ExecuteRemoveCardAtShopAsync(),
-            "select_character" => ExecuteSelectCharacterAsync(request),
-            "embark" => ExecuteEmbarkAsync(),
-            "unready" => ExecuteUnreadyAsync(),
-            "host_multiplayer_lobby" => ExecuteHostMultiplayerLobbyAsync(),
-            "join_multiplayer_lobby" => ExecuteJoinMultiplayerLobbyAsync(),
-            "ready_multiplayer_lobby" => ExecuteReadyMultiplayerLobbyAsync(),
-            "disconnect_multiplayer_lobby" => ExecuteDisconnectMultiplayerLobbyAsync(),
-            "increase_ascension" => ExecuteAdjustAscensionAsync(1, "increase_ascension"),
-            "decrease_ascension" => ExecuteAdjustAscensionAsync(-1, "decrease_ascension"),
-            "use_potion" => ExecuteUsePotionAsync(request),
-            "discard_potion" => ExecuteDiscardPotionAsync(request),
-            "run_console_command" => ExecuteRunConsoleCommandAsync(request),
-            "confirm_modal" => ExecuteConfirmModalAsync(),
-            "dismiss_modal" => ExecuteDismissModalAsync(),
-            "return_to_main_menu" => ExecuteReturnToMainMenuAsync(),
-            _ => throw new ApiException(409, "invalid_action", "Action is not supported yet.", new
+            _fastModeSnapshot = prefs.FastMode;
+            _fastModeOverrideActive = true;
+        }
+        if (prefs.FastMode != targetMode)
+        {
+            prefs.FastMode = targetMode;
+        }
+    }
+
+    private static void RestoreFastModeOverride()
+    {
+        if (!_fastModeOverrideActive || _fastModeSnapshot == null) return;
+        var prefs = SaveManager.Instance?.PrefsSave;
+        if (prefs != null && prefs.FastMode != _fastModeSnapshot.Value)
+            prefs.FastMode = _fastModeSnapshot.Value;
+        _fastModeSnapshot = null;
+        _fastModeOverrideActive = false;
+    }
+
+    private static void ApplyVisualMode(string executionMode)
+    {
+        if (IsInstantMode(executionMode))
+        {
+            ApplyFastModeOverride(FastModeType.Instant);
+            return;
+        }
+        RestoreFastModeOverride();
+    }
+
+    public static async Task<ActionResponsePayload> ExecuteAsync(ActionRequest request)
+    {
+        var mode = ResolveRequestMode(request);
+        ApplyVisualMode(mode);
+
+        try
+        {
+            var actionName = request.action?.Trim().ToLowerInvariant();
+
+            var result = actionName switch
             {
-                action = request.action
-            })
-        };
+                "end_turn" => ExecuteEndTurnAsync(),
+                "play_card" => ExecutePlayCardAsync(request),
+                "continue_run" => ExecuteContinueRunAsync(),
+                "abandon_run" => ExecuteAbandonRunAsync(),
+                "open_character_select" => ExecuteOpenCharacterSelectAsync(),
+                "open_timeline" => ExecuteOpenTimelineAsync(),
+                "close_main_menu_submenu" => ExecuteCloseMainMenuSubmenuAsync(),
+                "choose_timeline_epoch" => ExecuteChooseTimelineEpochAsync(request),
+                "confirm_timeline_overlay" => ExecuteConfirmTimelineOverlayAsync(),
+                "choose_map_node" => ExecuteChooseMapNodeAsync(request),
+                "collect_rewards_and_proceed" => ExecuteCollectRewardsAndProceedAsync(),
+                "claim_reward" => ExecuteClaimRewardAsync(request),
+                "choose_reward_card" => ExecuteChooseRewardCardAsync(request),
+                "skip_reward_cards" => ExecuteSkipRewardCardsAsync(),
+                "select_deck_card" => ExecuteSelectDeckCardAsync(request),
+                "close_cards_view" => ExecuteCloseCardsViewAsync(),
+                "confirm_selection" => ExecuteConfirmSelectionAsync(),
+                "proceed" => ExecuteProceedAsync(),
+                "open_chest" => ExecuteOpenChestAsync(),
+                "choose_treasure_relic" => ExecuteChooseTreasureRelicAsync(request),
+                "choose_event_option" => ExecuteChooseEventOptionAsync(request),
+                "choose_rest_option" => ExecuteChooseRestOptionAsync(request),
+                "open_shop_inventory" => ExecuteOpenShopInventoryAsync(),
+                "close_shop_inventory" => ExecuteCloseShopInventoryAsync(),
+                "buy_card" => ExecuteBuyCardAsync(request),
+                "buy_relic" => ExecuteBuyRelicAsync(request),
+                "buy_potion" => ExecuteBuyPotionAsync(request),
+                "remove_card_at_shop" => ExecuteRemoveCardAtShopAsync(),
+                "select_character" => ExecuteSelectCharacterAsync(request),
+                "embark" => ExecuteEmbarkAsync(),
+                "unready" => ExecuteUnreadyAsync(),
+                "host_multiplayer_lobby" => ExecuteHostMultiplayerLobbyAsync(),
+                "join_multiplayer_lobby" => ExecuteJoinMultiplayerLobbyAsync(),
+                "ready_multiplayer_lobby" => ExecuteReadyMultiplayerLobbyAsync(),
+                "disconnect_multiplayer_lobby" => ExecuteDisconnectMultiplayerLobbyAsync(),
+                "increase_ascension" => ExecuteAdjustAscensionAsync(1, "increase_ascension"),
+                "decrease_ascension" => ExecuteAdjustAscensionAsync(-1, "decrease_ascension"),
+                "use_potion" => ExecuteUsePotionAsync(request),
+                "discard_potion" => ExecuteDiscardPotionAsync(request),
+                "run_console_command" => ExecuteRunConsoleCommandAsync(request),
+                "confirm_modal" => ExecuteConfirmModalAsync(),
+                "dismiss_modal" => ExecuteDismissModalAsync(),
+                "return_to_main_menu" => ExecuteReturnToMainMenuAsync(),
+                _ => throw new ApiException(409, "invalid_action", "Action is not supported yet.", new
+                {
+                    action = request.action
+                })
+            };
+
+            var response = await result;
+            response = response with { mode = mode };
+            return response;
+        }
+        finally
+        {
+            if (IsInstantMode(mode))
+            {
+                RestoreFastModeOverride();
+            }
+        }
     }
 
     private static async Task<ActionResponsePayload> ExecuteEndTurnAsync()
@@ -156,7 +260,7 @@ internal static class GameActionService
             return false;
         }
 
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
 
         while (DateTime.UtcNow < deadline)
         {
@@ -614,7 +718,7 @@ internal static class GameActionService
             return false;
         }
 
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
 
         while (DateTime.UtcNow < deadline)
         {
@@ -747,7 +851,7 @@ internal static class GameActionService
             return false;
         }
 
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await NGame.Instance.ToSignal(NGame.Instance.GetTree(), SceneTree.SignalName.ProcessFrame);
@@ -884,7 +988,7 @@ internal static class GameActionService
             return false;
         }
 
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1215,7 +1319,7 @@ internal static class GameActionService
         NChooseACardSelectionScreen selectionScreen,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1232,7 +1336,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForCardsViewCloseAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1248,7 +1352,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForCombatHandSelectionResolutionAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1269,7 +1373,7 @@ internal static class GameActionService
         CombatHandSelectionMetadata previousSelection,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1309,7 +1413,7 @@ internal static class GameActionService
             return false;
         }
 
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         var attemptedRewardButtons = new HashSet<ulong>();
 
         while (DateTime.UtcNow < deadline)
@@ -1456,7 +1560,7 @@ internal static class GameActionService
         int previousOptionCount,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1481,7 +1585,7 @@ internal static class GameActionService
         int previousRewardCount,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1504,7 +1608,7 @@ internal static class GameActionService
 
     private static async Task<bool> ConfirmDeckSelectionAsync(NCardGridSelectionScreen screen, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
 
         while (DateTime.UtcNow < deadline)
         {
@@ -1667,7 +1771,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForChestOpenTransitionAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1826,7 +1930,7 @@ internal static class GameActionService
     /// </summary>
     private static async Task<bool> WaitForEventScreenTransitionAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1851,7 +1955,7 @@ internal static class GameActionService
         int previousOptionCount,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -1962,7 +2066,7 @@ internal static class GameActionService
     /// </summary>
     private static async Task<bool> WaitForRestOptionTransitionAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -2929,7 +3033,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForConsoleCommandStabilityAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3034,7 +3138,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForShopInventoryOpenAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3051,7 +3155,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForShopInventoryCloseAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3073,7 +3177,7 @@ internal static class GameActionService
         string? previousCardId,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3096,7 +3200,7 @@ internal static class GameActionService
         string? previousRelicId,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3119,7 +3223,7 @@ internal static class GameActionService
         string? previousPotionId,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3137,7 +3241,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForShopCardRemovalTransitionAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3265,7 +3369,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForCharacterSelectOpenAsync(NMainMenu screen, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3291,7 +3395,7 @@ internal static class GameActionService
         EpochSlotState previousState,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3325,7 +3429,7 @@ internal static class GameActionService
     private static async Task<bool> WaitForMainMenuSubmenuOpenAsync<TSubmenu>(NMainMenu screen, TimeSpan timeout)
         where TSubmenu : NSubmenu
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3347,7 +3451,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForMainMenuExitAsync(NMainMenu screen, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3372,7 +3476,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForMainMenuModalAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3390,7 +3494,7 @@ internal static class GameActionService
         NEpochInspectScreen? inspectScreen,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3418,7 +3522,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForTimelineUnlockTransitionAsync(Type unlockScreenType, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3444,7 +3548,7 @@ internal static class GameActionService
         NSubmenu submenu,
         TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3471,7 +3575,7 @@ internal static class GameActionService
             return true;
         }
 
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3492,7 +3596,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForEmbarkTransitionAsync(NCharacterSelectScreen screen, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3527,7 +3631,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForLobbyReadyTransitionAsync(NCharacterSelectScreen screen, bool ready, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3548,7 +3652,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForLobbyAscensionTransitionAsync(NCharacterSelectScreen screen, int targetAscension, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3578,7 +3682,7 @@ internal static class GameActionService
             return true;
         }
 
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3620,7 +3724,7 @@ internal static class GameActionService
         TimeSpan timeout,
         Func<StartRunLobby?, bool> predicate)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3643,7 +3747,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForMultiplayerLobbyReadyTransitionAsync(NMultiplayerTest scene, bool ready, bool expectRunStart, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3677,7 +3781,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForMultiplayerLobbyDisconnectTransitionAsync(NMultiplayerTest scene, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3700,7 +3804,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForPotionUseTransitionAsync(Player player, int potionIndex, PotionModel potion, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3721,7 +3825,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForPotionDiscardTransitionAsync(Player player, int potionIndex, PotionModel potion, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3814,7 +3918,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForModalTransitionAsync(IScreenContext previousModal, TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3832,7 +3936,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForGameOverExitAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3892,7 +3996,7 @@ internal static class GameActionService
 
     private static async Task<bool> WaitForRelicPickTransitionAsync(TimeSpan timeout)
     {
-        var deadline = DateTime.UtcNow + timeout;
+        var deadline = BuildDeadline(timeout);
         while (DateTime.UtcNow < deadline)
         {
             await WaitForNextFrameAsync();
@@ -3967,9 +4071,11 @@ internal sealed class ActionRequest
     public string? command { get; init; }
 
     public object? client_context { get; init; }
+
+    public string? mode { get; init; }
 }
 
-internal sealed class ActionResponsePayload
+internal sealed record ActionResponsePayload
 {
     public string action { get; init; } = string.Empty;
 
@@ -3978,6 +4084,8 @@ internal sealed class ActionResponsePayload
     public bool stable { get; init; }
 
     public string message { get; init; } = string.Empty;
+
+    public string mode { get; init; } = "stable";
 
     public GameStatePayload state { get; init; } = new();
 }
